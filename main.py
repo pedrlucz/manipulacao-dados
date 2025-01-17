@@ -1,79 +1,131 @@
 import pandas as pd
 import pymysql as py
+import os
 
+# Configurações do banco de dados
 db_config = {
-    'host':'localhost',
-    'user':'root',
-    'password':'123456',
-    'database':'leitura'
+    'host': 'localhost',
+    'user': 'root',
+    'password': '123456',
+    'database': 'leitura'
 }
 
-def salvar_no_db(dados):
+def salvar_lead_no_db(dados):
+    """Salva os dados de um lead no banco de dados."""
     conexao = py.connect(**db_config)
     cursor = conexao.cursor()
-    
+
     try:
-        # verificação para ver se o cpf já existe!! 
-        sql = """
-        INSERT INTO arquivos(CPF, Nome, Celular)
-        VALUES(%s, %s, %s)
-        """
-        
-        # telefone é outra tabela!!
-        cel = dados['Celular1'] if not pd.isna(dados['Celular1']) else ''
-        
-        cursor.execute(sql, (dados['CPF'], dados['Nome'], cel))
-        conexao.commit()
-        
+        # verificar se o CPF já existe
+        sql_verificar = "SELECT id FROM leads WHERE stCPF = %s"
+        cursor.execute(sql_verificar, (dados['stCPF'],))
+        lead_existente = cursor.fetchone()
+
+        if lead_existente:
+            lead_id = lead_existente[0]
+        else:
+            # Inserir novo lead
+            sql_inserir_lead = """
+                INSERT INTO leads (stCPF, stName, stEmail, stCity, stUF)
+                VALUES (%s, %s, %s, %s, %s)
+            """
+            cursor.execute(sql_inserir_lead, (
+                dados['stCPF'],
+                dados['stName'],
+                dados['stEmail'],
+                dados['stCity'],
+                dados['stUF']
+            ))
+            
+            conexao.commit()
+            lead_id = cursor.lastrowid
+
+        return lead_id
+
     except Exception as e:
-        print(f"erro ao salvar no banco {e}")
-    
+        print(f"Erro ao salvar lead no banco: {e}")
+        
     finally:
         cursor.close()
-        conexao.cursor()
+        conexao.close()
 
-planilha_path = 'disparos08.11Higienizado.csv'
-df = pd.read_csv(planilha_path, sep = ';')
+def salvar_telefone_no_db(lead_id, telefone):
+    """Salva um número de telefone associado a um lead no banco de dados."""
+    if not telefone:
+        return
 
-print(df.columns)
+    conexao = py.connect(**db_config)
+    cursor = conexao.cursor()
 
-for index, row in df.iterrows():
-    # converte a linha pra json
-    dados_json = row.to_dict()
+    try:
+        # inserir telefone
+        sql_inserir_telefone = """
+            INSERT INTO phones (stPhone, lead_id)
+            VALUES (%s, %d)
+        """
+        cursor.execute(sql_inserir_telefone, (telefone, lead_id))
+        conexao.commit()
+
+    except Exception as e:
+        print(f"Erro ao salvar telefone no banco: {e}")
+    finally:
+        cursor.close()
+        conexao.close()
+
+pasta_leads = r'.\leituraleads'
+pasta_phones = r'.\leituraphone'
+
+# listar todos os arquivos CSV na pasta 
+arquivos_leads = [f for f in os.listdir(pasta_leads) if f.endswith('.csv')]
+arquivos_phones = [f for f in os.listdir(pasta_phones) if f.endswith('.csv')]
+
+for arquivo in arquivos_leads:
+    print(f"lendo o arquivo de Leads: {arquivo}")
     
-    salvar_no_db(dados_json)
+    # caminho completo do arquivo CSV
+    caminho_arquivo_leads = os.path.join(pasta_leads, arquivo)
     
-    # marcar como processado (adicionar uma coluna 'Processado', na planilha)
-    # at para renomear uma coluna
-    df.at[index, 'Processado'] = 'Sim'
+    try:
+        # carregar os dados dos do arquivo CSV
+        leads_df = pd.read_csv(caminho_arquivo_leads, sep = ';', encoding = 'utf-8', engine = 'python')
+    except Exception as e:
+        print(f'erro ao ler o arquivo de Leads {arquivo}: {e}')
+        continue
+    
+    # processar cada lead
+    for _, lead in leads_df.iterrows():
+        lead_dados = lead.where(pd.notna(lead), None).to_dict() # substituir o NaN por None
+        if not lead_dados.get('stCPF'): # verificar se tem CPF
+            print(f'erro: CPF não encontrado pro registro: {lead_dados}')
+            continue
+    
+    lead_id = salvar_lead_no_db(lead_dados)
 
-df.to_csv(planilha_path , index = False)
+# # path das planilhas
+# leads_path = r'.\leituraleads\Leads.csv'
+# phones_path = r'.\leituraphone\Phones.csv'
+
+# # pra carregar os dados das planilhas
+# leads_df = pd.read_csv(leads_path, sep = ';', encoding = 'utf-8', engine = 'python')
+# phones_df = pd.read_csv(phones_path, sep = ';', encoding = 'utf-8', engine = 'python')
+
+# processar arquivos de telefones
+for arquivo in arquivos_phones:
+    print(f'lendo o arquivo de phones {arquivo}')
+
+    caminho_arquivo_phones = os.path.join(pasta_phones, arquivo)
+    
+    #carregar os dados do arquivo csv de telefones
+    try:
+        phones_df = pd.read_csv(caminho_arquivo_phones, sep = ';', encoding = 'utf-8', engine = 'python')
+    
+    except Exception as e:
+        print(f'erro ao ler o arquivo de phones{arquivo}: {e}')
+        continue
+    
+    for _, telefone in phones_df.iterrows():
+        lead_id = telefone.get('lead_id')
+        if lead_id: # ve se o tem o lead id
+            salvar_telefone_no_db(lead_id, telefone.get('stPhone'))
+
 print('Processo Concluído')
-
-
-
-
-
-
-
-
-# print(df.shape)
-# print(len(df))
-# print(df)
-# print(df.head())
-# df.info()
-
-# dtype para definir o tipo da coluna
-# muitas colunas e quero ler só algumas = usecols=[nome_das_colunas, indices_das_colunas]
-# list(df.cols) = a lista das colunas
-# ler um número específico de linhas do arquivo = nrows / df = pd.read_csv('diegao.csv', sep=';', on_bad_lines='skip', nrows = 100)
-# pular um número específico de linhas no início = skiprows = 5 (5primeiras)
-#                                      no final = skipfooter = 5
-# ler um bloco de arquivos = chunksize / df = pd.read_csv('diegao.csv', sep=';', on_bad_lines='skip', chunksize = 5000)
-#  - pode iterar sobre o arquivo
-#  - for chunk in df
-#       print(chunk.head(2))   -   vai ler as duas primeiras linhas de todos os blocos de 5k
-
-# linhas específicas
-#     for index, row in df.iterrows():
-#        print(f"Processando linha {index + 1}: {row['Nome']} - {row['Idade']} anos")

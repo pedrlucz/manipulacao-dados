@@ -181,19 +181,27 @@ class DataProcessor:
 def main():
     processor = DataProcessor()
     
+    file_path = r'C:\leitura_a\leads_data'
+    
     # Processa arquivo de leads
-    leads_df = processor.process_file(r'C:\Users\pedro\Desktop\para_leitura\leads_data', 'leads')
+    leads_df = processor.process_file(file_path, 'leads')
     if leads_df is not None:
         print("Arquivo de leads processado com sucesso")
         if processor.save_to_database(leads_df, 'leads'):
             print("Leads salvos no banco com sucesso")
+    try:
+        with open(file_path, 'r') as f:
+            print("Arquivo lido com sucesso pelo método `open`.")
+    except Exception as e:
+        print(f"Erro ao abrir arquivo com `open`: {e}")
+
         
-    # Processa arquivo de phones
-    phones_df = processor.process_file(r'C:\Users\pedro\Desktop\para_leitura\phone_data', 'phones')
-    if phones_df is not None:
-        print("Arquivo de phones processado com sucesso")
-        if processor.save_to_database(phones_df, 'phones'):
-            print("Phones salvos no banco com sucesso")
+    # # Processa arquivo de phones
+    # phones_df = processor.process_file(r'C:\Users\ptest\Desktop\leitura_a\phone_data', 'phones')
+    # if phones_df is not None:
+    #     print("Arquivo de phones processado com sucesso")
+    #     if processor.save_to_database(phones_df, 'phones'):
+    #         print("Phones salvos no banco com sucesso")
 
 if __name__ == "__main__":
     main()  
