@@ -99,7 +99,10 @@ for arquivo in arquivos_leads:
             print(f'erro: CPF não encontrado pro registro: {lead_dados}')
             continue
     
-    lead_id = salvar_lead_no_db(lead_dados)
+        lead_id = salvar_lead_no_db(lead_dados)
+    
+    os.remove(caminho_arquivo_leads)
+    print(f'arquivo {arquivo} de leads apagado.')
 
 # # path das planilhas
 # leads_path = r'.\leituraleads\Leads.csv'
@@ -127,5 +130,8 @@ for arquivo in arquivos_phones:
         lead_id = telefone.get('lead_id')
         if lead_id: # ve se o tem o lead id
             salvar_telefone_no_db(lead_id, telefone.get('stPhone'))
+            
+    os.remove(caminho_arquivo_phones)
+    print(f"arquivo {arquivo} de phones apagado")
 
 print('Processo Concluído')
