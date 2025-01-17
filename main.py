@@ -13,11 +13,13 @@ def salvar_no_db(dados):
     cursor = conexao.cursor()
     
     try:
+        # verificação para ver se o cpf já existe!! 
         sql = """
         INSERT INTO arquivos(CPF, Nome, Celular)
         VALUES(%s, %s, %s)
         """
         
+        # telefone é outra tabela!!
         cel = dados['Celular1'] if not pd.isna(dados['Celular1']) else ''
         
         cursor.execute(sql, (dados['CPF'], dados['Nome'], cel))
