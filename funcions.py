@@ -3,7 +3,7 @@ import pymysql as py
 import pandas as pd
 import json
 import os
-
+""""""
 def salvar_lead_no_db(dados):
     """Salva os dados de um lead no banco de dados."""
     conexao = py.connect(**db_config)
