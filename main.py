@@ -5,6 +5,6 @@ print('Processo Iniciado')
 pasta_leads = r'.\leituraleads'
 pasta_phones = r'.\leituraphone'
 
-processar_arquivos(pasta_leads, pasta_phones)
+processar_arquivos(pasta_leads)
 
 print('Processo Concluído')

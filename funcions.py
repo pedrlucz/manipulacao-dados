@@ -1,6 +1,7 @@
 from dbconfig import db_config 
 import pymysql as py
 import pandas as pd
+import json
 import os
 
 def salvar_lead_no_db(dados):
@@ -19,10 +20,12 @@ def salvar_lead_no_db(dados):
             
         else:
             # caso o cpf não exista, pra inserir novo lead
+            
             sql_inserir_lead = """
                 INSERT INTO leads (stCPF, stName, stEmail, stCity, stUF)
                 VALUES (%s, %s, %s, %s, %s)
             """
+            
             cursor.execute(sql_inserir_lead, (
                 dados['stCPF'],
                 dados['stName'],
@@ -32,6 +35,7 @@ def salvar_lead_no_db(dados):
             ))
             
             conexao.commit()
+            
             lead_id = cursor.lastrowid
 
         return lead_id
@@ -43,164 +47,97 @@ def salvar_lead_no_db(dados):
         cursor.close()
         conexao.close()
 
-def salvar_telefone_no_db(lead_id, telefone):
+def salvar_telefone_no_db(lead_id, telefones):
     """Salva um número de telefone associado a um lead no banco de dados."""
-    if not telefone:
-        return
-
-    conexao = py.connect(**db_config)
-    cursor = conexao.cursor()
-
-    try:
-        # onde insere o telefone na tabela phone
-        sql_inserir_telefone = """
-            INSERT INTO phones (stPhone, lead_id)
-            VALUES (%s, %d)
-        """
-        cursor.execute(sql_inserir_telefone, (telefone, lead_id))
-        conexao.commit()
-
-    except Exception as e:
-        print(f"Erro ao salvar telefone no banco: {e}")
+    if telefones: # verifica se a lista de telefone nao está vazia
+        #filtrando os telefones válidos, não nulos
         
-    finally:
-        cursor.close()
-        conexao.close()
+        telefones_validos = [ telefone for telefone in telefones if pd.notna(telefone)]
+        
+        if telefones_validos:
 
-def processar_arquivos(pasta_leads, pasta_phones):
+            conexao = py.connect(**db_config)
+            cursor = conexao.cursor()
+
+            try:
+                for telefone in telefones_validos:
+                        
+                    # onde insere o telefone na tabela phone
+                    sql_inserir_telefone = """
+                        INSERT INTO phones (stPhone, lead_id)
+                        VALUES (%s, %s)
+                    """
+                    
+                    cursor.execute(sql_inserir_telefone, (telefone, lead_id))
+                
+                    conexao.commit()
+
+            except Exception as e:
+                print(f"Erro ao salvar telefone no banco: {e}")
+                
+            finally:
+                cursor.close()
+                conexao.close()
+        
+        else:
+            print(f"Nenhum telefone válido para salvar para o lead ID {lead_id}")
+
+def converter_csv_json(caminho_csv):
+    try:
+        df = pd.read_csv(caminho_csv, sep = ";", encoding = "utf-8", engine = "python")
+        df = df.where(pd.notna(df), None) #substitui o NaN por None
+        return df.to_dict(orient = 'records') # converter para uma lista de dicionários
+    
+    except Exception as e:
+        print(f"erro ao converter {caminho_csv} para json: {e}")
+
+def processar_arquivos(pasta_leads):
     # pra processar os arquivos contidos nas pastas específicadas
     arquivos_leads = [f for f in os.listdir(pasta_leads) if f.endswith('.csv')] # o endswith pra filtrar os com extensão .csv
-    arquivos_phones = [f for f in os.listdir(pasta_phones) if f.endswith('.csv')]
     
     # pra ler os dados de cada arquivo CSV e tranformar 
     for arquivo in arquivos_leads:
         print(f"lendo o arquivo de leads: {arquivo}")
 
-        caminho_arquivo_leads = os.path.join(pasta_leads, arquivo)
+        caminho_arquivo = os.path.join(pasta_leads, arquivo)
+        dados_leads = converter_csv_json(caminho_arquivo)
         
-        try:
-            leads_df = pd.read_csv(caminho_arquivo_leads, sep = ';', encoding = 'utf-8', engine = 'python')
-        
-        except Exception as e:
-            print(f'erro ao ler o arquivo de leads {arquivo}: {e}')
+        if not dados_leads:
             continue
         
         arquivo_processado_com_erro = False
         
-        # processar cada lead
-        for _, lead in leads_df.iterrows():
-            lead_dados = lead.where(pd.notna(lead), None).to_dict() # pra substituir NaN por None
-              
-            if not lead_dados.get('stCPF'): # verifica se o cpf existe
-                print(f'erro: CPF não encontrado pro registro {lead_dados}')
+        for lead in dados_leads:
+            if not lead.get('stCPF'):
+                print(f"erro: CPF ausente no registro {lead}")
+                
                 arquivo_processado_com_erro = True
                 
-            lead_id = salvar_lead_no_db(lead_dados)
-            if not lead_id: # se o lead não for salvo corretamente
+                continue
+            
+            telefones = [ telefone for telefone in
+                [ 
+                         lead.get(f"telefone{i}") for i in range(1, 11)
+                            ]
+            if pd.notna(telefone)    ]
+            
+            telefones_validos = [ t for t in telefones if t ] # remove valores vazios            
+            
+            lead_id = salvar_lead_no_db(lead)
+            
+            if not lead_id:
                 arquivo_processado_com_erro = True
+                continue
             
-        # renomear o arquivo caso tenha dado erro
+            print(f'Telefones para salvar no lead ID {lead_id}: {telefones_validos}')
+            salvar_telefone_no_db(lead_id, telefones_validos)
+        
+        # renomear
         if arquivo_processado_com_erro:
-            novo_nome_arquivo = caminho_arquivo_leads.replace('.csv', "_erro.csv")
-            os.rename(caminho_arquivo_leads, novo_nome_arquivo)
-            print(f'erro no arquivo de leads, o arquivo foi renomeado para {novo_nome_arquivo}')
+            novo_nome = caminho_arquivo.replace('.csv', 'erro.csv')
+            os.rename(caminho_arquivo, novo_nome)
+            print(f"erro no arquivo {arquivo}, renomeado para {novo_nome}")
         
         else:
-            # apagar o arquivo
-            os.remove(caminho_arquivo_leads)
-            print(f'arquivo {arquivo} de leads apagado')
-    
-    # pra cada arquivo de telefone
-    for arquivo in arquivos_phones:
-        print(f'lendo o arquivo de phones: {arquivo}')
-        
-        caminho_arquivo_phones = os.path.join(pasta_phones, arquivo)
-        
-        try:
-            phones_df = pd.read_csv(caminho_arquivo_phones, sep = ';', encoding = 'utf-8', engine = 'python')
-        
-        except Exception as e:
-            print(f'erro ao ler o arquivo de phones {arquivo}: {e}')
-            continue
-        
-        arquivo_processado_com_erro = False
-        
-        # pra processar cada telefone
-        for _, telefone in phones_df.iterrows():
-            lead_id = telefone.get('lead.id')
-            
-            if lead_id:
-                sucesso = salvar_telefone_no_db(lead_id, telefone.get('stPhone'))
-                
-                if not sucesso:
-                    arquivo_processado_com_erro = True
-        
-        # renomear o arquivo caso tenha acontecido um erro
-        if arquivo_processado_com_erro:
-            novo_nome_arquivo = caminho_arquivo_phones.replace(".csv", "_erro.csv")
-            os.rename(caminho_arquivo_phones, novo_nome_arquivo)
-            print(f"erro no arquivo de phones, o arquivo foi renomeado pra {novo_nome_arquivo}") 
-        
-        else:
-            # apagar o arquivo
-            os.remove(caminho_arquivo_phones)
-            print(f"arquivo {arquivo} de phones apagado")
-            
-# listar todos os arquivos CSV na pasta 
-# arquivos_leads = [f for f in os.listdir(pasta_leads) if f.endswith('.csv')]
-# arquivos_phones = [f for f in os.listdir(pasta_phones) if f.endswith('.csv')]
-
-# for arquivo in arquivos_leads:
-#     print(f"lendo o arquivo de Leads: {arquivo}")
-    
-#     # caminho completo do arquivo CSV
-#     caminho_arquivo_leads = os.path.join(pasta_leads, arquivo)
-    
-#     try:
-#         # carregar os dados dos do arquivo CSV
-#         leads_df = pd.read_csv(caminho_arquivo_leads, sep = ';', encoding = 'utf-8', engine = 'python')
-#     except Exception as e:
-#         print(f'erro ao ler o arquivo de Leads {arquivo}: {e}')
-#         continue
-    
-#     # processar cada lead
-#     for _, lead in leads_df.iterrows():
-#         lead_dados = lead.where(pd.notna(lead), None).to_dict() # substituir o NaN por None
-#         if not lead_dados.get('stCPF'): # verificar se tem CPF
-#             print(f'erro: CPF não encontrado pro registro: {lead_dados}')
-#             continue
-    
-#         lead_id = salvar_lead_no_db(lead_dados)
-    
-#     os.remove(caminho_arquivo_leads)
-#     print(f'arquivo {arquivo} de leads apagado.')
-
-# # path das planilhas
-# leads_path = r'.\leituraleads\Leads.csv'
-# phones_path = r'.\leituraphone\Phones.csv'
-
-# # pra carregar os dados das planilhas
-# leads_df = pd.read_csv(leads_path, sep = ';', encoding = 'utf-8', engine = 'python')
-# phones_df = pd.read_csv(phones_path, sep = ';', encoding = 'utf-8', engine = 'python')
-
-# processar arquivos de telefones
-# for arquivo in arquivos_phones:
-#     print(f'lendo o arquivo de phones {arquivo}')
-
-#     caminho_arquivo_phones = os.path.join(pasta_phones, arquivo)
-    
-#     #carregar os dados do arquivo csv de telefones
-#     try:
-#         phones_df = pd.read_csv(caminho_arquivo_phones, sep = ';', encoding = 'utf-8', engine = 'python')
-    
-#     except Exception as e:
-#         print(f'erro ao ler o arquivo de phones{arquivo}: {e}')
-#         continue
-    
-#     for _, telefone in phones_df.iterrows():
-#         lead_id = telefone.get('lead_id')
-#         if lead_id: # ve se o tem o lead id
-#             salvar_telefone_no_db(lead_id, telefone.get('stPhone'))
-            
-#     os.remove(caminho_arquivo_phones)
-#     print(f"arquivo {arquivo} de phones apagado")
+            os.remove(caminho_arquivo)
+            print(f'arquivo {arquivo} processado e apagado.')
