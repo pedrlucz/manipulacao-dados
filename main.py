@@ -5,7 +5,7 @@ import json
 import os
 import logging
 
-# configuração do logging
+# configuração do logging, pra incluir conteudo da msg, nivel da msg e hora
 logging.basicConfig(level = logging.INFO, format = '%(asctime)s - %(levelname)s - %(message)s')
 
 def limpar_dados(dados):
@@ -21,8 +21,10 @@ def converter_para_bool(valor):
         return valor
     
     if isinstance(valor, str):
+        # compara com essa lista de verdadeira
         return valor.lower() in ['true', '1', 't', 'y', 'yes', 'sim', 's']
     
+    # se for int ou float, converte pra boolean
     if isinstance(valor, (int, float)):
         return bool(valor)
     
@@ -64,7 +66,7 @@ def salvar_lead_no_db(dados):
 
             cursor.execute(sql_inserir_lead, valores)
             conexao.commit()
-            lead_id = cursor.lastrowid
+            lead_id = cursor.lastrowid # recupera o id do lead que acabou de ser inserido
             logging.info(f"Novo lead inserido com ID: {lead_id}")
 
         return lead_id
@@ -108,14 +110,18 @@ def salvar_telefone_no_db(lead_id, telefones):
 
 def processar_arquivos(pasta_leads):
     """Processa todos os arquivos CSV na pasta de leads."""
+    
+    # os.listdir para pegar filtrar só os que terminam com .csv
     arquivos_leads = [f for f in os.listdir(pasta_leads) if f.endswith('.csv')]
 
     for arquivo in arquivos_leads:
+        # pra cada arquivo csv vai montar um path
         caminho_arquivo = os.path.join(pasta_leads, arquivo)
         logging.info(f"Processando arquivo: {arquivo}")
 
         try:
-            df = pd.read_csv(caminho_arquivo, sep=';', encoding='utf-8')
+            # pra ler o arquivo
+            df = pd.read_csv(caminho_arquivo, sep = ';', encoding = 'utf-8')
             df = df.map(lambda x: None if pd.isna(x) else x)  # converte NaN para None
 
             # verifica se as colunas opcionais existem no DataFrame
@@ -132,6 +138,7 @@ def processar_arquivos(pasta_leads):
             if 'blBlackList' in df.columns:
                 df['blBlackList'] = df['blBlackList'].apply(converter_para_bool)
 
+            # converte o dataframe pra uma lista de dicionário(um por registro), pra facilitar
             dados_json = df.to_dict(orient = 'records')
 
             arquivo_processado_com_erro = False
