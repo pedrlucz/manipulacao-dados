@@ -4,3 +4,5 @@ teste.py
 
 pyvenv.cfg
 dbconfig.py
+
+__pycache__

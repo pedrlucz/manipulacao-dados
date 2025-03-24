@@ -43,7 +43,17 @@ def salvar_lead_no_db(dados):
 
         if lead_existente:
             lead_id = lead_existente[0]
-            logging.info(f"Lead com CPF {dados['stCPF']} já existe. ID: {lead_id}")
+            logging.info(f"Lead com CPF {dados['stCPF']} já existe. ID: {lead_id}, Atualizando...")
+            # atualziar as novas informações
+            
+            atualizar_lead_db(dados, lead_id)
+            
+            # extrair telefones antes de chamar a função
+            telefones = [
+                            dados.get(f'telefone{i}') for i in range(1, 6) if dados.get(f'telefone{i}') is not None
+                                                                                                                        ]
+
+            atualizar_telefone_db(lead_id, telefones)
             
         else:
             # limpar dados para remover NaN
@@ -107,6 +117,93 @@ def salvar_telefone_no_db(lead_id, telefones):
                 conexao.close()
         else:
             logging.warning(f"Nenhum telefone válido para salvar para o lead ID {lead_id}")
+
+def atualizar_lead_db(dados, lead_id):
+    """Atualiza os dados de um lead existente no banco de dados"""
+    
+    conexao_db = py.connect(**db_config)
+    cursor = conexao_db.cursor()
+    
+    try:
+
+        # limpar os dados para remover NaN
+        dados_limpos = limpar_dados(dados)
+        
+        # mostrar a query dinamicamente apenas para os campos que possuem valor
+        coluna_valores = []
+        valores = []
+        
+        for chave, valor in dados_limpos.items():
+            if valor is not None: # ignorar valores nones
+                coluna_valores.append(f"{chave} = %s")
+                valores.append(valor)
+                
+        if not coluna_valores:
+            logging.info(f"Nenhuma atualização necessária para o lead {lead_id}")
+            
+            return False
+        
+        valores.append(lead_id) # adicionar o id ao final da cláusula WHERE
+        
+        sql_update = f"""
+            UPDATE leads
+            SET {', '.join(coluna_valores)}
+            WHERE id = %s
+        """
+        
+        cursor.execute(sql_update, valores)
+        conexao_db.commit()
+        logging.info(f"Lead ID {lead_id} atualizado com sucesso.")
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"Erro ao atualizar lead ID {lead_id}: {e}")
+        return False
+    
+    finally:
+        cursor.close()
+        conexao_db.close()
+
+def atualizar_telefone_db(lead_id, telefones):
+    """Atualiza os telefones associados a um lead no banco de dados"""
+    conexao_db = py.connect(**db_config)
+    cursor = conexao_db.cursor()
+    
+    try:
+        # limpar telefones inválidos
+        telefones_validos = [telefone for telefone in telefones if pd.notna(telefone)]
+        
+        if not telefones_validos:
+            logging.warning(f"Nenhum telefone válido pra atualizar pro LEAD ID: {lead_id}")
+            return False
+        
+        # remove telefones antigos 
+        cursor.execute("DELETE FROM phones WHERE lead_id = %s", (lead_id, ))
+        conexao_db.commit()    
+
+        # inserir novos telefones
+        for telefone in telefones_validos:
+            sql_inserir_telefone = """
+                INSERT INTO phones (stPhone, lead_id)
+                VALUE (%s, %s) 
+            """
+            
+            cursor.execute(sql_inserir_telefone, (telefone, lead_id))
+            
+        conexao_db.commit()
+        logging.info(f"Telefones do lead ID {lead_id} atualizados com sucesso.")
+        
+        return True
+    
+    except Exception as e:
+        logging.error(f"Erro ao atualizar telefones do lead ID {lead_id}: {e}")
+        
+        return False
+
+    finally:
+        cursor.close()
+        conexao_db.close()
 
 def processar_arquivos(pasta_leads):
     """Processa todos os arquivos CSV na pasta de leads."""
@@ -185,7 +282,7 @@ def processar_arquivos(pasta_leads):
 
                 # salvar telefones associados ao lead
                 telefones_validos = [
-                                            item.get(f'telefone{i}') for i in range(1, 6)  # exemplo para 5 telefones
+                                            item.get(f'telefone{i}') for i in range(1, 11)  # exemplo para 10 telefones
                                                 if item.get(f'telefone{i}') is not None
                                                                                                                             ]
                 salvar_telefone_no_db(lead_id, telefones_validos)
