@@ -1,191 +1,299 @@
 from dbconfig import db_config 
 import pymysql as py
 import pandas as pd
-import json
+import logging
 import os
-""""""
+
+# configuração do logging, pra incluir conteudo da msg, nivel da msg e hora
+logging.basicConfig(level = logging.INFO, format = '%(asctime)s - %(levelname)s - %(message)s')
+
+def limpar_dados(dados):
+    """Converte valores NaN para None antes de inserir no banco de dados."""
+    return {chave: None if pd.isna(valor) else valor for chave, valor in dados.items()}
+
+def converter_para_bool(valor):
+    """Converte valores para boolean."""
+    if pd.isna(valor):
+        return None
+    
+    if isinstance(valor, bool):
+        return valor
+    
+    if isinstance(valor, str):
+        # compara com essa lista de verdadeira
+        return valor.lower() in ['true', '1', 't', 'y', 'yes', 'sim', 's']
+    
+    # se for int ou float, converte pra boolean
+    if isinstance(valor, (int, float)):
+        return bool(valor)
+    
+    return None
+
 def salvar_lead_no_db(dados):
     """Salva os dados de um lead no banco de dados."""
     conexao = py.connect(**db_config)
     cursor = conexao.cursor()
 
     try:
-        # verificar se o CPF já existe, se exitir retorna o id
+        # verificar se o CPF já existe
         sql_verificar = "SELECT id FROM leads WHERE stCPF = %s"
         cursor.execute(sql_verificar, (dados['stCPF'],))
         lead_existente = cursor.fetchone()
 
         if lead_existente:
             lead_id = lead_existente[0]
+            logging.info(f"Lead com CPF {dados['stCPF']} já existe. ID: {lead_id}, Atualizando...")
+            # atualziar as novas informações
+            
+            atualizar_lead_db(dados, lead_id)
+            
+            # extrair telefones antes de chamar a função
+            telefones = [
+                            dados.get(f'telefone{i}') for i in range(1, 6) if dados.get(f'telefone{i}') is not None
+                                                                                                                        ]
+
+            atualizar_telefone_db(lead_id, telefones)
             
         else:
-            # caso o cpf não exista, pra inserir novo lead
+            # limpar dados para remover NaN
+            dados_limpos = limpar_dados(dados)
+
+            # inserir novo lead
+            colunas = []
+            valores = []
             
-            sql_inserir_lead = """
-                INSERT INTO leads (stCPF, stRg, dtBirth, stName, stEmail, stCity, stUF, stAddress, stMothersName, stFathersName, blSanitized, dtSanitized, stCompany, stOrgan, dcSalary, blBlock, dtReleasedIn, stNumber, stDistrict, stPosition, stZipCode, isATaker, blBlackList)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            
-            cursor.execute(sql_inserir_lead, (
-                dados['stCPF'], dados.get('stRg'), dados.get('dtBirth'), dados['stName'], dados['stEmail'], 
-                dados['stCity'], dados['stUF'], dados.get('stAddress'), dados.get('stMothersName'), dados.get('stFathersName'),
-                dados.get('blSanitized'), dados.get('dtSanitized'), dados.get('stCompany'), dados.get('stOrgan'),
-                dados.get('dcSalary'), dados.get('blBlock'), dados.get('dtReleasedIn'), dados.get('stNumber'),
-                dados.get('stDistrict'), dados.get('stPosition'), dados.get('stZipCode'), dados.get('isATaker'), dados.get('blBlackList')
-            ))
-            
+            for chave, valor in dados_limpos.items():
+                if valor is not None:  # ignorar valores None
+                    colunas.append(chave)
+                    valores.append(valor)
+
+            # montar a query dinamicamente
+            sql_inserir_lead = f"""
+                                        INSERT INTO leads ({', '.join(colunas)})
+                                            VALUES ({', '.join(['%s'] * len(colunas))})
+                                                                                            """
+
+            cursor.execute(sql_inserir_lead, valores)
             conexao.commit()
-            
-            lead_id = cursor.lastrowid
+            lead_id = cursor.lastrowid # recupera o id do lead que acabou de ser inserido
+            logging.info(f"Novo lead inserido com ID: {lead_id}")
 
         return lead_id
 
     except Exception as e:
-        print(f"Erro ao salvar lead no banco: {e}")
+        logging.error(f"Erro ao salvar lead no banco: {e}")
         return None
-        
+
     finally:
         cursor.close()
         conexao.close()
 
 def salvar_telefone_no_db(lead_id, telefones):
     """Salva um número de telefone associado a um lead no banco de dados."""
-    if telefones: # verifica se a lista de telefone nao está vazia
-        # filtrando os telefones válidos, não nulos
-        
-        telefones_validos = [ telefone for telefone in telefones if pd.notna(telefone)]
-        
-        if telefones_validos:
+    if telefones:  # verifica se a lista de telefones não está vazia
+        telefones_validos = [telefone for telefone in telefones if pd.notna(telefone)]
 
+        if telefones_validos:
             conexao = py.connect(**db_config)
             cursor = conexao.cursor()
 
             try:
                 for telefone in telefones_validos:
-                        
-                    # onde insere o telefone na tabela phone
-                    sql_inserir_telefone = """
-                        INSERT INTO phones (stPhone, lead_id)
-                        VALUES (%s, %s)
-                    """
                     
+                    sql_inserir_telefone = """
+                                                    INSERT INTO phones (stPhone, lead_id)
+                                                        VALUES (%s, %s)
+                                                                                                """
+                                                                                                
                     cursor.execute(sql_inserir_telefone, (telefone, lead_id))
-                
                     conexao.commit()
 
             except Exception as e:
-                print(f"Erro ao salvar telefone no banco: {e}")
-                
+                logging.error(f"Erro ao salvar telefone no banco: {e}")
+
             finally:
                 cursor.close()
                 conexao.close()
-        
         else:
-            print(f"Nenhum telefone válido para salvar para o lead ID {lead_id}")
+            logging.warning(f"Nenhum telefone válido para salvar para o lead ID {lead_id}")
 
-def processar_planilha_indice(arquivo):
-    """Irá processar o JSON pelo índice"""
+def atualizar_lead_db(dados, lead_id):
+    """Atualiza os dados de um lead existente no banco de dados"""
+    
+    conexao_db = py.connect(**db_config)
+    cursor = conexao_db.cursor()
+    
     try:
-        df = pd.read_csv(arquivo, sep = ';', encoding = 'utf-8')
+
+        # limpar os dados para remover NaN
+        dados_limpos = limpar_dados(dados)
+        
+        # mostrar a query dinamicamente apenas para os campos que possuem valor
+        coluna_valores = []
+        valores = []
+        
+        for chave, valor in dados_limpos.items():
+            if valor is not None: # ignorar valores nones
+                coluna_valores.append(f"{chave} = %s")
+                valores.append(valor)
+                
+        if not coluna_valores:
+            logging.info(f"Nenhuma atualização necessária para o lead {lead_id}")
+            
+            return False
+        
+        valores.append(lead_id) # adicionar o id ao final da cláusula WHERE
+        
+        sql_update = f"""
+            UPDATE leads
+            SET {', '.join(coluna_valores)}
+            WHERE id = %s
+        """
+        
+        cursor.execute(sql_update, valores)
+        conexao_db.commit()
+        logging.info(f"Lead ID {lead_id} atualizado com sucesso.")
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"Erro ao atualizar lead ID {lead_id}: {e}")
+        return False
+    
+    finally:
+        cursor.close()
+        conexao_db.close()
+
+def atualizar_telefone_db(lead_id, telefones):
+    """Atualiza os telefones associados a um lead no banco de dados"""
+    conexao_db = py.connect(**db_config)
+    cursor = conexao_db.cursor()
+    
+    try:
+        # limpar telefones inválidos
+        telefones_validos = [telefone for telefone in telefones if pd.notna(telefone)]
+        
+        if not telefones_validos:
+            logging.warning(f"Nenhum telefone válido pra atualizar pro LEAD ID: {lead_id}")
+            return False
+        
+        # remove telefones antigos 
+        cursor.execute("DELETE FROM phones WHERE lead_id = %s", (lead_id, ))
+        conexao_db.commit()    
+
+        # inserir novos telefones
+        for telefone in telefones_validos:
+            sql_inserir_telefone = """
+                INSERT INTO phones (stPhone, lead_id)
+                VALUE (%s, %s) 
+            """
+            
+            cursor.execute(sql_inserir_telefone, (telefone, lead_id))
+            
+        conexao_db.commit()
+        logging.info(f"Telefones do lead ID {lead_id} atualizados com sucesso.")
+        
+        return True
     
     except Exception as e:
-        print(f"Erro ao ler a planilha {arquivo}: {e}")
-        return
-    
-    colunas = df.columns.tolist()
-    print(f"colunas encontradas {colunas}")
-    
-    dados_json = df.to_dict(orient = 'records') # cada linha vai se tornar um dicionário
- 
-    for item in dados_json:
-        # convertendo a lista de dicionários em json
-        json_dados = json.dumps(item, ensure_ascii = False)
-        print(f"JSON dos dados: {json_dados}")
+        logging.error(f"Erro ao atualizar telefones do lead ID {lead_id}: {e}")
         
-        # acessando os valores por indíces
-        valores = list(item.values()) # pega os valores na ordem das colunas
-        
-        # criando um dicionário para o banco de dados usando índices das colunas
-        dados_lead = {
-            'stCPF': item[colunas[0]],  
-            'stRg': item[colunas[1]],  
-            'dtBirth': item[colunas[2]],  
-            'stName': item[colunas[3]],  
-            'stEmail': item[colunas[4]],
-            'stCity': item[colunas[5]],
-            'stUF': item[colunas[6]],
-            'stAddress': item[colunas[7]],
-            'stMothersName': item[colunas[8]],
-            'stFathersName': item[colunas[9]],
-            'stSanitized': item[colunas[10]],
-            'dtSanitized': item[colunas[11]],
-            'stCompany': item[colunas[12]],
-            'stOrgan': item[colunas[13]],
-            'dcSalary': item[colunas[14]],
-            'blBlock': item[colunas[15]],
-            'dtReleasedIn': item[colunas[16]],
-            'stNumber': item[colunas[17]],
-            'stDistrict': item[colunas[18]],
-            'stPosition': item[colunas[19]],
-            'stZipCode': item[colunas[20]],
-            'isATaker': item[colunas[21]],
-            'blBlackList': item[colunas[22]]      
-        }
-        
-        lead_id = salvar_lead_no_db(dados_lead)
-        
-        if lead_id:
-            print(f"Lead {lead_id} salvo com sucesso.")
-        else:
-            print(f"Erro ao salvar o lead {item[colunas[0]]}")    
-        
-def processar_arquivos(pasta_leads):
-    # pra processar os arquivos contidos nas pastas específicadas
-    arquivos_leads = [f for f in os.listdir(pasta_leads) if f.endswith('.csv')] # o endswith pra filtrar os com extensão .csv
-    
-    # pra ler os dados de cada arquivo CSV e tranformar 
-    for arquivo in arquivos_leads:
-        print(f"lendo o arquivo de leads: {arquivo}")
+        return False
 
+    finally:
+        cursor.close()
+        conexao_db.close()
+
+def processar_arquivos(pasta_leads):
+    """Processa todos os arquivos CSV na pasta de leads."""
+    
+    # os.listdir para pegar filtrar só os que terminam com .csv
+    arquivos_leads = [f for f in os.listdir(pasta_leads) if f.endswith('.csv')]
+
+    for arquivo in arquivos_leads:
+        # pra cada arquivo csv vai montar um path
         caminho_arquivo = os.path.join(pasta_leads, arquivo)
-        
+        logging.info(f"Processando arquivo: {arquivo}")
+
         try:
-            df = pd.read_csv(caminho_arquivo, sep = ';', encoding = 'utf-8', engine = 'python')
-            df = df.where(pd.notna(df), None)
-            dados_json = df.to_dict(orient = "records")
+            # pra ler o arquivo
+            df = pd.read_csv(caminho_arquivo, sep = ';', encoding = 'utf-8')
+            df = df.map(lambda x: None if pd.isna(x) else x)  # converte NaN para None
+
+            # verifica se as colunas opcionais existem no DataFrame
+            colunas_opcionais = ['isATaker', 'blBlackList']
             
+            for coluna in colunas_opcionais:
+                if coluna not in df.columns:
+                    df[coluna] = None  # adiciona a coluna com valores None se não existir
+
+            # converter campos booleanos
+            if 'isATaker' in df.columns:
+                df['isATaker'] = df['isATaker'].apply(converter_para_bool)
+                
+            if 'blBlackList' in df.columns:
+                df['blBlackList'] = df['blBlackList'].apply(converter_para_bool)
+
+            # converte o dataframe pra uma lista de dicionário(um por registro), pra facilitar
+            dados_json = df.to_dict(orient = 'records')
+
+            arquivo_processado_com_erro = False
+
+            for item in dados_json:
+                # criar o dicionário de dados do lead
+                dados_lead = {
+                                    'stName': item.get('stName'),
+                                        'stCPF': item.get('stCPF'),
+                                            'stRg': item.get('stRg'),
+                                                'dtBirth': item.get('dtBirth'),
+                                                    'stEmail': item.get('stEmail'),
+                                                        'stCity': item.get('stCity'),
+                                                            'stUF': item.get('stUF'),
+                                                                'stAddress': item.get('stAddress'),
+                                                                    'stMothersName': item.get('stMothersName'),
+                                                                        'stFathersName': item.get('stFathersName'),
+                                                                            'blSanitized': item.get('blSanitized'),
+                                                                                'dtSanitized': item.get('dtSanitized'),
+                                                                            'stCompany': item.get('stCompany'),
+                                                                        'stOrgan': item.get('stOrgan'),
+                                                                    'dcSalary': item.get('dcSalary'),
+                                                                'blBlock': item.get('blBlock'),
+                                                            'dtReleasedIn': item.get('dtReleasedIn'),
+                                                        'stNumber': item.get('stNumber'),
+                                                    'stDistrict': item.get('stDistrict'),
+                                                'stPosition': item.get('stPosition'),
+                                            'stZipCode': item.get('stZipCode'),
+                                        'isATaker': item.get('isATaker'),  # campo boolean
+                                    'blBlackList': item.get('blBlackList')  # campo boolean
+                                                                                                                                }
+
+                # verificar se o CPF está presente
+                if not dados_lead['stCPF']:
+                    logging.error(f"Erro: CPF ausente no registro {item}")
+                    arquivo_processado_com_erro = True
+                    continue
+
+                lead_id = salvar_lead_no_db(dados_lead)
+
+                if not lead_id:
+                    arquivo_processado_com_erro = True
+                    continue
+
+                # salvar telefones associados ao lead
+                telefones_validos = [
+                                            item.get(f'telefone{i}') for i in range(1, 11)  # exemplo para 10 telefones
+                                                if item.get(f'telefone{i}') is not None
+                                                                                                                            ]
+                salvar_telefone_no_db(lead_id, telefones_validos)
+
+            if arquivo_processado_com_erro:
+                novo_nome = caminho_arquivo.replace('.csv', '_erro.csv')
+                os.rename(caminho_arquivo, novo_nome)
+                logging.warning(f"Erro no arquivo {arquivo}, renomeado para {novo_nome}")
+            
+            else:
+                os.remove(caminho_arquivo)
+                logging.info(f"Arquivo {arquivo} processado e apagado")
+
         except Exception as e:
-            print(f"erro ao ler a planilha {arquivo}: {e}")
-        
-        arquivo_processado_com_erro = False
-        
-        for item in dados_json:
-            valores = list(item.values())
-            
-            if not valores[0]: # índice 0 deve conter CPF
-                print(f"erro: CPF ausente no registro {valores}")
-                arquivo_processado_com_erro = True
-                continue
-            
-            telefones_validos = [
-                valores[i] for i in range(10, 20)
-                if valores[i] and isinstance(valores[i], (str, int))
-            ]
-            
-            lead_id = salvar_lead_no_db(valores)
-            
-            if not lead_id:
-                arquivo_processado_com_erro = True
-                continue
-            
-            print(f"telefones para salvar no lead ID {lead_id}: {telefones_validos}")
-            salvar_telefone_no_db(lead_id, telefones_validos)
-            
-        if arquivo_processado_com_erro:
-            novo_nome = caminho_arquivo.replace('.csv', '_erro.csv')
-            os.rename(caminho_arquivo, novo_nome)
-            print(f"erro no arquivo {arquivo}, renomeado para {novo_nome}")
-            
-        else:
-            os.remove(caminho_arquivo)
-            print(f"arquivo {arquivo} processado e apagado")
+            logging.error(f"Erro ao processar o arquivo {arquivo}: {e}")
