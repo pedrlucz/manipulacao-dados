@@ -13,6 +13,7 @@ def limpar_dados(dados):
 
 def converter_para_bool(valor):
     """Converte valores para boolean."""
+    
     if pd.isna(valor):
         return None
     
@@ -41,6 +42,7 @@ def salvar_lead_no_db(dados):
         lead_existente = cursor.fetchone()
 
         if lead_existente:
+            # mais uma verificação pro telefone unique aqui
             lead_id = lead_existente[0]
             logging.info(f"Lead com CPF {dados['stCPF']} já existe. ID: {lead_id}, Atualizando...")
             # atualziar as novas informações
@@ -49,7 +51,7 @@ def salvar_lead_no_db(dados):
             
             # extrair telefones antes de chamar a função
             telefones = [
-                            dados.get(f'telefone{i}') for i in range(1, 6) if dados.get(f'telefone{i}') is not None
+                            dados.get(f'telefone{i}') for i in range(1, 11) if dados.get(f'telefone{i}') is not None
                                                                                                                         ]
 
             atualizar_telefone_db(lead_id, telefones)
@@ -90,7 +92,9 @@ def salvar_lead_no_db(dados):
 
 def salvar_telefone_no_db(lead_id, telefones):
     """Salva um número de telefone associado a um lead no banco de dados."""
-    if telefones:  # verifica se a lista de telefones não está vazia
+    
+    # verifica se a lista de telefones não está vazia
+    if telefones:
         telefones_validos = [telefone for telefone in telefones if pd.notna(telefone)]
 
         if telefones_validos:
@@ -220,8 +224,8 @@ def processar_arquivos(pasta_leads):
             df = pd.read_csv(caminho_arquivo, sep = ';', encoding = 'utf-8')
             df = df.map(lambda x: None if pd.isna(x) else x)  # converte NaN para None
 
-            # verifica se as colunas opcionais existem no DataFrame
-            colunas_opcionais = ['isATaker', 'blBlackList']
+            # verifica se as colunas opcionais existem
+            colunas_opcionais = ['isATaker', 'blBlackList', 'blSanitized']
             
             for coluna in colunas_opcionais:
                 if coluna not in df.columns:
@@ -233,6 +237,9 @@ def processar_arquivos(pasta_leads):
                 
             if 'blBlackList' in df.columns:
                 df['blBlackList'] = df['blBlackList'].apply(converter_para_bool)
+                
+            if 'blSanitized' in df.columns:
+                df['blSanitized'] = df['blSanitized'].apply(converter_para_bool)
 
             # converte o dataframe pra uma lista de dicionário(um por registro), pra facilitar
             dados_json = df.to_dict(orient = 'records')
