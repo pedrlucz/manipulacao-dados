@@ -281,12 +281,13 @@ def processar_arquivos(pasta_leads):
 
                 # salvar telefones associados ao lead
                 telefones_validos = [
-                                            item.get(f'telefone{i}') for i in range(1, 11)  # exemplo para 10 telefones
+                                            item.get(f'telefone{i}') for i in range(1, 11)  # para 10 telefones
                                                 if item.get(f'telefone{i}') is not None
                                                                                                                             ]
+                
                 salvar_telefone_no_db(lead_id, telefones_validos)
 
-            if arquivo_processado_com_erro:
+            if arquivo_processado_com_erro == True:
                 novo_nome = caminho_arquivo.replace('.csv', '_erro.csv')
                 os.rename(caminho_arquivo, novo_nome)
                 logging.warning(f"Erro no arquivo {arquivo}, renomeado para {novo_nome}")
