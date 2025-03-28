@@ -31,22 +31,43 @@ def converter_para_bool(valor):
     return None
 
 def salvar_lead_no_db(dados):
-    """Salva os dados de um lead no banco de dados."""
+    """Salva os dados de um lead no banco de dados, ignorando se já foi higienizado."""
     conexao = py.connect(**db_config)
     cursor = conexao.cursor()
 
     try:
+        # verificar se já está higienizado
         # verificar se o CPF já existe
-        sql_verificar = "SELECT id FROM leads WHERE stCPF = %s"
+        sql_verificar = "SELECT id, blSanitized FROM leads WHERE stCPF = %s"
         cursor.execute(sql_verificar, (dados['stCPF'],))
         lead_existente = cursor.fetchone()
 
         if lead_existente:
             # mais uma verificação pro telefone unique aqui
-            lead_id = lead_existente[0]
-            logging.info(f"Lead com CPF {dados['stCPF']} já existe. ID: {lead_id}, Atualizando...")
-            # atualziar as novas informações
+            # sql_verifica_phone = "SELECT id FROM phones WHERE stPhone = %s"
+            # telefoness = [dados.get(f'telefone{i}') for i in range(1, 11) if dados.get(f'telefone{i}') is not None]
+            # cursor.execute(sql_verifica_phone, telefoness)
+            # phone_existente = cursor.fetchone()
             
+            # if phone_existente:
+            #     phone_id = phone_existente[0] 
+            #     logging.info(f"Lead com o ID: {phone_id} já existe, Atualizando...")
+                    
+            #     telefones = [
+            #                         dados.get(f'telefone{i}') for i in range(1, 11) if dados.get(f'telefone{i}') is not None
+            #                                                                                                                         ]
+                
+            #     atualizar_telefone_db(lead_id, telefones)
+                                       
+            lead_id, blSanitized = lead_existente
+            
+            if blSanitized:
+                logging.info(f"Lead com o CPF {dados['stCPF']}, já foi higienizado, Ignorando...")                
+                return None
+            
+            logging.info(f"Lead com CPF {dados['stCPF']} já existe. ID: {lead_id}, Atualizando...")
+            
+            # atualziar as novas informações
             atualizar_lead_db(dados, lead_id)
             
             # extrair telefones antes de chamar a função
@@ -55,7 +76,7 @@ def salvar_lead_no_db(dados):
                                                                                                                         ]
 
             atualizar_telefone_db(lead_id, telefones)
-            
+                      
         else:
             # limpar dados para remover NaN
             dados_limpos = limpar_dados(dados)
@@ -91,35 +112,78 @@ def salvar_lead_no_db(dados):
         conexao.close()
 
 def salvar_telefone_no_db(lead_id, telefones):
-    """Salva um número de telefone associado a um lead no banco de dados."""
+    """Salva um número de telefone associado a um lead no banco de dados, se o número já existir pega e coloca no novo lead"""
+    conexao = py.connect(**db_config)
+    cursor = conexao.cursor()
     
-    # verifica se a lista de telefones não está vazia
-    if telefones:
+    try:
+        # filtra telefones válidos
         telefones_validos = [telefone for telefone in telefones if pd.notna(telefone)]
+        
+        for telefone in telefones_validos:
+            # verifica se o telefone já existe na tabela
+            sql_verificar = "SELECT id FROM phones WHERE stPhone = %s"
+            cursor.execute(sql_verificar, (telefone,))
+            resultado = cursor.fetchone()
+            
+            if resultado:
+                # vai precisar atualizar para o novo lead_id
+                sql_atualizar = "UPDATE phones SET lead_id = %s WHERE stPhone = %s"
+                cursor.execute(sql_atualizar, (lead_id, telefone))
+                logging.info(f"Telefone: {telefone} já existia e foi atualizado pro Lead ID {lead_id}.")
+                
+            else:
+                sql_inserir = "INSERT INTO phones (stPhone, lead_id) VALUES (%s, %s)"
+                cursor.execute(sql_inserir, (telefone, lead_id))
+                logging.info(f"Telefone {telefone} inserido para o Lead ID {lead_id}.")
+                
+            conexao.commit()
+            logging.info(f"Telefones verificados e atualizados/inseridos com sucesso para o Lead ID {lead_id}.")
+            
+            return True
 
-        if telefones_validos:
-            conexao = py.connect(**db_config)
-            cursor = conexao.cursor()
+    except Exception as e:
+        logging.error(f"Erro ao atualizar/inserir o(s) telefone(s) para o Lead ID {lead_id}: {e}")
+        
+        return False
+    
+    finally:
+        cursor.close()
+        conexao.close()
+        
+        
+    # caso de ruim
+    # verifica se a lista de telefones não está vazia
+    # if telefones:
+    #     telefones_validos = [telefone for telefone in telefones if pd.notna(telefone)]
 
-            try:
-                for telefone in telefones_validos:
+    #     # for telefone in telefones_validos:
+    #     #     sql_verificar = "SELECT id FROM phones WHERE stPhone = %s"
+    #     #     cursor.execute(sql_verificar, (telefone, ))
+    
+    #     if telefones_validos:
+    #         conexao = py.connect(**db_config)
+    #         cursor = conexao.cursor()
+
+    #         try:
+    #             for telefone in telefones_validos:
                     
-                    sql_inserir_telefone = """
-                                                    INSERT INTO phones (stPhone, lead_id)
-                                                        VALUES (%s, %s)
-                                                                                                """
+    #                 sql_inserir_telefone = """
+    #                                                 INSERT INTO phones (stPhone, lead_id)
+    #                                                     VALUES (%s, %s)
+    #                                                                                             """
                                                                                                 
-                    cursor.execute(sql_inserir_telefone, (telefone, lead_id))
-                    conexao.commit()
+    #                 cursor.execute(sql_inserir_telefone, (telefone, lead_id))
+    #                 conexao.commit()
 
-            except Exception as e:
-                logging.error(f"Erro ao salvar telefone no banco: {e}")
+    #         except Exception as e:
+    #             logging.error(f"Erro ao salvar telefone no banco: {e}")
 
-            finally:
-                cursor.close()
-                conexao.close()
-        else:
-            logging.warning(f"Nenhum telefone válido para salvar para o lead ID {lead_id}")
+    #         finally:
+    #             cursor.close()
+    #             conexao.close()
+    #     else:
+    #         logging.warning(f"Nenhum telefone válido para salvar para o lead ID {lead_id}")
 
 def atualizar_lead_db(dados, lead_id):
     """Atualiza os dados de um lead existente no banco de dados"""
