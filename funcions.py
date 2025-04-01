@@ -2,6 +2,7 @@ from dbconfig import db_config
 import pymysql as py
 import pandas as pd
 import logging
+import regex as re
 import os
 
 # configuração do logging, pra incluir conteudo da msg, nivel da msg e hora
@@ -36,36 +37,21 @@ def salvar_lead_no_db(dados):
     cursor = conexao.cursor()
 
     try:
-        # verificar se já está higienizado
-        # verificar se o CPF já existe
+        # verificar se o CPF existe e se está higienizado 
         sql_verificar = "SELECT id, blSanitized FROM leads WHERE stCPF = %s"
-        cursor.execute(sql_verificar, (dados['stCPF'],))
+        
+        cpf_formatado = formatar_cpf(dados['stCPF']) 
+        cursor.execute(sql_verificar, (cpf_formatado,))
         lead_existente = cursor.fetchone()
 
-        if lead_existente:
-            # mais uma verificação pro telefone unique aqui
-            # sql_verifica_phone = "SELECT id FROM phones WHERE stPhone = %s"
-            # telefoness = [dados.get(f'telefone{i}') for i in range(1, 11) if dados.get(f'telefone{i}') is not None]
-            # cursor.execute(sql_verifica_phone, telefoness)
-            # phone_existente = cursor.fetchone()
-            
-            # if phone_existente:
-            #     phone_id = phone_existente[0] 
-            #     logging.info(f"Lead com o ID: {phone_id} já existe, Atualizando...")
-                    
-            #     telefones = [
-            #                         dados.get(f'telefone{i}') for i in range(1, 11) if dados.get(f'telefone{i}') is not None
-            #                                                                                                                         ]
-                
-            #     atualizar_telefone_db(lead_id, telefones)
-                                       
+        if lead_existente:              
             lead_id, blSanitized = lead_existente
             
             if blSanitized:
-                logging.info(f"Lead com o CPF {dados['stCPF']}, já foi higienizado, Ignorando...")                
+                logging.info(f"Lead com o CPF {cpf_formatado} já foi higienizado, Ignorando...")                
                 return None
             
-            logging.info(f"Lead com CPF {dados['stCPF']} já existe. ID: {lead_id}, Atualizando...")
+            logging.info(f"Lead com CPF {cpf_formatado} já existe. ID: {lead_id}, Atualizando...")
             
             # atualziar as novas informações
             atualizar_lead_db(dados, lead_id)
@@ -150,40 +136,6 @@ def salvar_telefone_no_db(lead_id, telefones):
     finally:
         cursor.close()
         conexao.close()
-        
-        
-    # caso de ruim
-    # verifica se a lista de telefones não está vazia
-    # if telefones:
-    #     telefones_validos = [telefone for telefone in telefones if pd.notna(telefone)]
-
-    #     # for telefone in telefones_validos:
-    #     #     sql_verificar = "SELECT id FROM phones WHERE stPhone = %s"
-    #     #     cursor.execute(sql_verificar, (telefone, ))
-    
-    #     if telefones_validos:
-    #         conexao = py.connect(**db_config)
-    #         cursor = conexao.cursor()
-
-    #         try:
-    #             for telefone in telefones_validos:
-                    
-    #                 sql_inserir_telefone = """
-    #                                                 INSERT INTO phones (stPhone, lead_id)
-    #                                                     VALUES (%s, %s)
-    #                                                                                             """
-                                                                                                
-    #                 cursor.execute(sql_inserir_telefone, (telefone, lead_id))
-    #                 conexao.commit()
-
-    #         except Exception as e:
-    #             logging.error(f"Erro ao salvar telefone no banco: {e}")
-
-    #         finally:
-    #             cursor.close()
-    #             conexao.close()
-    #     else:
-    #         logging.warning(f"Nenhum telefone válido para salvar para o lead ID {lead_id}")
 
 def atualizar_lead_db(dados, lead_id):
     """Atualiza os dados de um lead existente no banco de dados"""
@@ -284,8 +236,13 @@ def processar_arquivos(pasta_leads):
         logging.info(f"Processando arquivo: {arquivo}")
 
         try:
+            
+            caminho_parquet = converter_csv_para_parquet(caminho_arquivo)
+            logging.info(f"Arquivo convertido para parquet: {caminho_parquet}") 
             # pra ler o arquivo
-            df = pd.read_csv(caminho_arquivo, sep = ';', encoding = 'utf-8')
+            
+            df = pd.read_parquet(caminho_parquet, engine = 'pyarrow')
+            
             df = df.map(lambda x: None if pd.isna(x) else x)  # converte NaN para None
 
             # verifica se as colunas opcionais existem
@@ -359,13 +316,52 @@ def processar_arquivos(pasta_leads):
                 salvar_telefone_no_db(lead_id, telefones_validos)
 
             if arquivo_processado_com_erro == True:
-                novo_nome = caminho_arquivo.replace('.csv', '_erro.csv')
-                os.rename(caminho_arquivo, novo_nome)
-                logging.warning(f"Erro no arquivo {arquivo}, renomeado para {novo_nome}")
+                novo_nome = caminho_arquivo.replace('.parquet', '_erro.parquet')
+                os.rename(caminho_parquet, novo_nome)
+                logging.warning(f"Erro no arquivo {caminho_parquet}, renomeado para {novo_nome}")
             
             else:
-                os.remove(caminho_arquivo)
-                logging.info(f"Arquivo {arquivo} processado e apagado")
+                os.remove(caminho_parquet)
+                logging.info(f"Arquivo {caminho_parquet} processado e apagado")
 
         except Exception as e:
             logging.error(f"Erro ao processar o arquivo {arquivo}: {e}")
+            os.rename(caminho_arquivo, caminho_arquivo.replace('.csv', '_erro.csv'))
+            
+            # caso a conversão tenha criado o parquet mas o processamento falhou
+            if os.path.exists(caminho_parquet):
+                os.rename(caminho_parquet, caminho_parquet.replace('.parquet', '_erro.parquet'))
+            
+def converter_csv_para_parquet(caminho_csv):
+    """Converte um arquivo CSV para Parquet e retorna o novo caminho"""
+    
+    try:
+        df = pd.read_csv(caminho_csv, sep = ';', encoding = 'utf-8')
+        
+        # pra definir o novo nome do arquivo
+        caminho_parquet = caminho_csv.replace('.csv', '.parquet')
+        
+        # preserva metadados importantes
+        df.to_parquet(
+                            caminho_parquet, 
+                                engine = 'pyarrow', 
+                                    index = False,
+                                        compression = 'snappy'  # melhor compactação?
+                                                                        )
+        
+        os.remove(caminho_csv)
+        
+        return caminho_parquet
+        
+    except Exception as e:
+        logging.error(f"Falha na conversão de {caminho_csv} para Parquet: {e}")
+        raise # propaga o erro pra tratamento externo
+    
+def formatar_cpf(cpf):
+    cpf = re.sub(r"[^\d]", "", cpf)  # remove caracteres não numéricos
+    
+    if len(cpf) > 11:
+        return None
+    else:
+        return cpf.zfill(11)
+ 
