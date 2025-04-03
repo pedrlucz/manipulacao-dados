@@ -317,7 +317,7 @@ def processar_arquivos(pasta_leads):
                 salvar_telefone_no_db(lead_id, telefones_validos)
 
             if arquivo_processado_com_erro == True:
-                novo_nome = caminho_arquivo.replace('.parquet', '_erro.parquet')
+                novo_nome = caminho_parquet.replace('.parquet', '_erro.parquet')
                 os.rename(caminho_parquet, novo_nome)
                 logging.warning(f"Erro no arquivo {caminho_parquet}, renomeado para {novo_nome}")
             
@@ -359,18 +359,30 @@ def converter_csv_para_parquet(caminho_csv):
         raise # propaga o erro pra tratamento externo
     
 def formatar_cpf(cpf) -> str:
-    # e cpf for None ou NaN, retorne None
-    if cpf is None or pd.isna(cpf):
+    # se é nulo ou NaN
+    if cpf is None or (isinstance(cpf, float) and pd.isna(cpf)):
         return None
     
-    # converte o valor para string
-    cpf_str = str(cpf)
-    cpf_str = re.sub(r"[^\d]", "", cpf_str)  # remove caracteres não numéricos
+    try:
+        # se for float ou int, converte para inteiro primeiro 
+        if isinstance(cpf, (float, int)):
+            cpf = int(cpf)
+        
+        # converte pra string e filtra somente os dígitos
+        cpf_str = ''.join([ch for ch in str(cpf) if ch.isdigit()])
+        
+        # se ainda tiver mais de 11, retorna none
+        if len(cpf_str) > 11:
+            logging.info(f"estão tendo {len(cpf_str)} dígitos no cpf que chega e retornando none")
+            return None
+        
+        formatted_cpf = '{:0>11}'.format(cpf_str)
+        
+        return formatted_cpf
     
-    if len(cpf_str) > 11:
+    except Exception as e:
+        logging.error(f"Não consegui formatar o cpf, está assim {cpf_str.zfill(11)}, {e}")
         return None
-    else:
-        return cpf_str.zfill(12)
  
 def tratar_dtBirth(dtBirth):
     """formata o número da data de aniversário para o banco de dados"""
@@ -384,10 +396,23 @@ def tratar_dtBirth(dtBirth):
     
     # tenta converter a string pra datetime assumindo o formato dd/mm/yyyy
     try:
-        dt = datetime.datetime.strptime(str(dtBirth), "%d-%m-%Y")
+        data_str = str(dtBirth).strip()
         
-        return dt.strftime("%Y-%m-%dd")
+        formatos_possiveis = ["%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y"]
+        
+        for formato in formatos_possiveis:
+            try:
+                dt = datetime.datetime.strptime(data_str, formato)
+        
+                return dt.strftime("%Y-%m-%d")
+            
+            except ValueError:
+                continue
+                
+        logging.error(f"formato de data inválido: {data_str}")
+        
+        return None
     
-    except ValueError:
-        logging.error(f"formato de data inválido: {dtBirth}")
+    except Exception as e:
+        logging.error(f"Erro ao processar a data: {dtBirth} - {str(e)}")
         return None
