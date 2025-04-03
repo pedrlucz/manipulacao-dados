@@ -1,8 +1,9 @@
 from dbconfig import db_config 
 import pymysql as py
 import pandas as pd
-import logging
 import regex as re
+import datetime
+import logging
 import os
 
 # configuração do logging, pra incluir conteudo da msg, nivel da msg e hora
@@ -273,7 +274,7 @@ def processar_arquivos(pasta_leads):
                                     'stName': item.get('stName'),
                                         'stCPF': item.get('stCPF'),
                                             'stRg': item.get('stRg'),
-                                                'dtBirth': item.get('dtBirth'),
+                                                'dtBirth': tratar_dtBirth(item.get('dtBirth')),
                                                     'stEmail': item.get('stEmail'),
                                                         'stCity': item.get('stCity'),
                                                             'stUF': item.get('stUF'),
@@ -311,7 +312,7 @@ def processar_arquivos(pasta_leads):
                 telefones_validos = [
                                             item.get(f'telefone{i}') for i in range(1, 11)  # para 10 telefones
                                                 if item.get(f'telefone{i}') is not None
-                                                                                                                            ]
+                                                                                                                        ]
                 
                 salvar_telefone_no_db(lead_id, telefones_validos)
 
@@ -336,7 +337,7 @@ def converter_csv_para_parquet(caminho_csv):
     """Converte um arquivo CSV para Parquet e retorna o novo caminho"""
     
     try:
-        df = pd.read_csv(caminho_csv, sep = ';', encoding = 'utf-8')
+        df = pd.read_csv(caminho_csv, sep = ';', encoding = 'utf-8', dtype = {'stCPF': str})
         
         # pra definir o novo nome do arquivo
         caminho_parquet = caminho_csv.replace('.csv', '.parquet')
@@ -349,7 +350,7 @@ def converter_csv_para_parquet(caminho_csv):
                                         compression = 'snappy'  # melhor compactação?
                                                                         )
         
-        os.remove(caminho_csv)
+        os.remove(caminho_csv) # trocar esse
         
         return caminho_parquet
         
@@ -357,11 +358,36 @@ def converter_csv_para_parquet(caminho_csv):
         logging.error(f"Falha na conversão de {caminho_csv} para Parquet: {e}")
         raise # propaga o erro pra tratamento externo
     
-def formatar_cpf(cpf):
-    cpf = re.sub(r"[^\d]", "", cpf)  # remove caracteres não numéricos
+def formatar_cpf(cpf) -> str:
+    # e cpf for None ou NaN, retorne None
+    if cpf is None or pd.isna(cpf):
+        return None
     
-    if len(cpf) > 11:
+    # converte o valor para string
+    cpf_str = str(cpf)
+    cpf_str = re.sub(r"[^\d]", "", cpf_str)  # remove caracteres não numéricos
+    
+    if len(cpf_str) > 11:
         return None
     else:
-        return cpf.zfill(11)
+        return cpf_str.zfill(12)
  
+def tratar_dtBirth(dtBirth):
+    """formata o número da data de aniversário para o banco de dados"""
+    
+    if pd.isna(dtBirth):
+        return None
+    
+    # se a data já for do tipo datetime, apenas formata
+    if isinstance(dtBirth, datetime.date):
+        return dtBirth.strftime("%Y-%m-%d")
+    
+    # tenta converter a string pra datetime assumindo o formato dd/mm/yyyy
+    try:
+        dt = datetime.datetime.strptime(str(dtBirth), "%d-%m-%Y")
+        
+        return dt.strftime("%Y-%m-%dd")
+    
+    except ValueError:
+        logging.error(f"formato de data inválido: {dtBirth}")
+        return None
