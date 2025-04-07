@@ -38,10 +38,17 @@ def salvar_lead_no_db(dados):
     cursor = conexao.cursor()
 
     try:
+        cpf_formatado = formatar_cpf(dados['stCPF'])
+        
+        if not cpf_formatado:
+            logging.error("CPF inválido, não será salvo.")
+            return None
+        
+        dados['stCPF'] = cpf_formatado
+        
         # verificar se o CPF existe e se está higienizado 
         sql_verificar = "SELECT id, blSanitized FROM leads WHERE stCPF = %s"
         
-        cpf_formatado = formatar_cpf(dados['stCPF']) 
         cursor.execute(sql_verificar, (cpf_formatado,))
         lead_existente = cursor.fetchone()
 
@@ -301,7 +308,8 @@ def processar_arquivos(pasta_leads):
                     logging.error(f"Erro: CPF ausente no registro {item}")
                     arquivo_processado_com_erro = True
                     continue
-
+                
+                # ta salvando aqui
                 lead_id = salvar_lead_no_db(dados_lead)
 
                 if not lead_id:
@@ -334,7 +342,7 @@ def processar_arquivos(pasta_leads):
                 os.rename(caminho_parquet, caminho_parquet.replace('.parquet', '_erro.parquet'))
             
 def converter_csv_para_parquet(caminho_csv):
-    """Converte um arquivo CSV para Parquet e retorna o novo caminho"""
+    """converte um arquivo CSV para Parquet e retorna o novo caminho"""
     
     try:
         df = pd.read_csv(caminho_csv, sep = ';', encoding = 'utf-8', dtype = {'stCPF': str})
@@ -342,7 +350,6 @@ def converter_csv_para_parquet(caminho_csv):
         # pra definir o novo nome do arquivo
         caminho_parquet = caminho_csv.replace('.csv', '.parquet')
         
-        # preserva metadados importantes
         df.to_parquet(
                             caminho_parquet, 
                                 engine = 'pyarrow', 
@@ -360,7 +367,7 @@ def converter_csv_para_parquet(caminho_csv):
     
 def formatar_cpf(cpf) -> str:
     # se é nulo ou NaN
-    if cpf is None or (isinstance(cpf, float) and pd.isna(cpf)):
+    if cpf is None or (isinstance(cpf, float)):
         return None
     
     try:
@@ -383,7 +390,15 @@ def formatar_cpf(cpf) -> str:
     except Exception as e:
         logging.error(f"Não consegui formatar o cpf, está assim {cpf_str.zfill(11)}, {e}")
         return None
- 
+
+# def formatar_cpf(cpf):
+#     cpf = re.sub(r"[^\d]", "", cpf)  # remove caracteres não numéricos
+    
+#     if len(cpf) > 11:
+#         return None
+#     else:
+#         return cpf.zfill(11)
+
 def tratar_dtBirth(dtBirth):
     """formata o número da data de aniversário para o banco de dados"""
     
