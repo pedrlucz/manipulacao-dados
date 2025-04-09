@@ -52,4 +52,4 @@ def processo_arquivo():
         return jsonify({f"error": "erro interno ao processar arquivos"}), 500
 
 if __name__ == "__main__":
-    app.run(host = '192.168.20.139', port = 8000, debug = True)
+    app.run(host = 'localhost', port = 5000)
