@@ -1,7 +1,6 @@
 from dbconfig import db_config 
 import pymysql as py
 import pandas as pd
-import regex as re
 import datetime
 import logging
 import os
@@ -293,8 +292,8 @@ def processar_arquivos(pasta_leads):
                                                                             'stCompany': item.get('stCompany'),
                                                                         'stOrgan': item.get('stOrgan'),
                                                                     'dcSalary': item.get('dcSalary'),
-                                                                'blBlock': item.get('blBlock'),
-                                                            'dtReleasedIn': item.get('dtReleasedIn'),
+                                                            #     'blBlock': item.get('blBlock'),
+                                                            # 'dtReleasedIn': item.get('dtReleasedIn'),
                                                         'stNumber': item.get('stNumber'),
                                                     'stDistrict': item.get('stDistrict'),
                                                 'stPosition': item.get('stPosition'),
@@ -390,14 +389,6 @@ def formatar_cpf(cpf) -> str:
     except Exception as e:
         logging.error(f"Não consegui formatar o cpf, está assim {cpf_str.zfill(11)}, {e}")
         return None
-
-# def formatar_cpf(cpf):
-#     cpf = re.sub(r"[^\d]", "", cpf)  # remove caracteres não numéricos
-    
-#     if len(cpf) > 11:
-#         return None
-#     else:
-#         return cpf.zfill(11)
 
 def tratar_dtBirth(dtBirth):
     """formata o número da data de aniversário para o banco de dados"""
